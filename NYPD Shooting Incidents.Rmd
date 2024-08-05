@@ -1,0 +1,248 @@
+---
+title: "NYPD Shooting Incidents by Borough and Month"
+output: 
+  pdf_document: default
+  html_document: default
+date: "2024-07-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+I'm interested in using NYPD shooting incident reports to determine the lowest and highest rates of shootings based on time of year and borough. This information can be useful both on an individual level of optimizing personal safety and from a city planning perspective of providing resources to ensure the safety of civilians. 
+
+## Load Libraries
+
+I needed to first install tidyverse which I did in the console using install.packages('tidyverse'). Then I load the tidyverse, modelr, and lubridate libraries.
+
+```{r add_libraries, echo=TRUE}
+library(tidyverse)
+library(lubridate)
+#library(modelr)
+```
+
+## Read in CSV
+
+I read in the csv and save it into a variable shooting_data. 
+
+```{r read_csv, echo=TRUE}
+shooting_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+shooting_data
+```
+## Clean Data
+
+I first remove all duplicate entries, filtering by incident key and time of occurrence because those should be distinct for every incident.  
+
+```{r remove_dups, echo=TRUE}
+shooting_data <- shooting_data %>% distinct(shooting_data$INCIDENT_KEY, shooting_data$OCCUR_TIME, .keep_all = TRUE)
+shooting_data
+```
+
+I remove all variables except date and borough and add an incidents variable. I change the date variable from a character to a "date" class. I also ensure completion of data by dropping any rows with "NA" entries. Here it appears that step was unnecessary. 
+
+```{r clean, echo=TRUE}
+shooting_location <- shooting_data %>%
+  select(c(OCCUR_DATE, BORO)) %>%
+  mutate(OCCUR_DATE = as.Date(OCCUR_DATE, format = "%m/%d/%Y"), incidents = 1) %>%
+  rename(Borough = "BORO") %>%
+  drop_na()
+shooting_location
+```
+
+I summarize the data to make sure everything appears reasonable.
+
+```{r summarize, echo=TRUE}
+summary(shooting_location)
+```
+
+## Analysis
+
+Now I group the data and count how many incidents happened per month in each borough. 
+
+```{r group, echo=TRUE}
+shootings_per_month <- shooting_location %>% 
+  group_by(month = floor_date(OCCUR_DATE, 'month'),Borough) %>%
+  summarize(incidents=sum(incidents)) %>%
+  select(month, Borough, incidents)
+shootings_per_month
+```
+
+## Plot Timeseries
+
+I plot the number of incidents per month for each borough. 
+
+```{r incidents_over_time, echo=TRUE}
+shootings_per_month %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_line(aes(color=Borough))+
+  theme(legend.position = "bottom")+
+  labs(title= "Monthly Shooting Incidents",
+       x = "Date (By Month)",
+       y = "Number of Shootings")
+```
+
+Although the graph is very busy, I can see some patterns emerging. For instance, it seems Brooklyn has the most incidents, then the Bronx, then Manhattan and Queens which appear similar, and Staten Island has the fewest incidents. From just this data, I can't deduce anything meaningful about relative incident rate. Brooklyn has a much larger population size than Staten Island, so it isn't surprising that there are more incidents. To calculate shootings per capita, I import the NYC population by borough information. This document just gives population size by decade, so I'm just going to look at 2010. The ratio of shootings appears fairly stable, so I think this will be a decent representation of which borough has the highest per capita rate of shootings.
+
+I import the population data and clean the data to only include 2010 data for the boroughs.
+
+```{r pop_csv, echo=TRUE}
+nyc_pop <- read_csv("https://data.cityofnewyork.us/api/views/xywu-7bv9/rows.csv?accessType=DOWNLOAD")
+pop_2010 <- nyc_pop %>%
+  select(c(Borough, '2010')) %>%
+  filter(Borough != "NYC Total") %>%
+  mutate(across(where(is.character), toupper)) %>%
+  rename(population = '2010')
+pop_2010
+```
+
+I reformat my shooting data to match the format of the population data, summing all 2010 incidents and removing other years. 
+
+```{r shootings_2010, echo=TRUE}
+shootings_2010 <- shooting_location %>%
+  group_by(year = year(OCCUR_DATE),Borough) %>%
+  summarize(incidents=sum(incidents)) %>%
+  filter(year==2010) %>%
+  select(year, Borough, incidents)
+shootings_2010
+```
+
+I merge the dataframes and calculate shootings per capita.
+
+```{r per_capita, echo=TRUE}
+per_capita_2010 <- shootings_2010 %>%
+  full_join(pop_2010) %>%
+  mutate(shootings_per_capita = incidents/population)
+per_capita_2010
+```
+I create a pie chart to compare the relative shootings per million. We can also see how that compares to the absolute number of shootings. 
+
+```{r pie, echo=TRUE}
+per_capita_2010 %>%
+  ggplot(aes(x="", y=shootings_per_capita, fill= Borough)) +
+  geom_col() +
+  coord_polar(theta="y")+
+  labs(title="Shooting Incidents Per Capita")
+per_capita_2010 %>%
+  ggplot(aes(x="", y=incidents, fill= Borough)) +
+  geom_col() +
+  coord_polar(theta="y")+
+  labs(title="Total Number of Shooting Incidents")
+```
+
+We can conclude that while Brooklyn had the highest absolute number of shootings in 2010, the highest number of shootings per capita in 2010 was the Bronx. I could perform this analysis for every year to determine whether or not the rankings are consistent. Instead, I want to focus my time on a different trend I noticed in the first graph.
+
+## Monthly Spikes
+
+There seem to be regular spikes in shooting incidents that hold true for all boroughs except maybe Staten Island because the counts are so low. I'm interested in exploring what months have the highest shooting rates, and because the spikes are consistent between boroughs I'm going to go ahead and combine borough data. 
+
+```{r together, echo=TRUE}
+total_shootings_per_month <- shooting_location %>% 
+  group_by(month = floor_date(OCCUR_DATE, 'month')) %>%
+  summarize(incidents=sum(incidents)) %>%
+  select(month, incidents)
+total_shootings_per_month
+summary(total_shootings_per_month$incidents)
+total_shootings_per_month %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_line(aes())+
+  labs(title= "Total Monthly Shooting Incidents in NYC",
+       x = "Date (By Month)",
+       y = "Number of Shootings")
+```
+
+We can see spikes but not the months they occur. To make the visualization clearer, I separate the years out.
+
+
+```{r split_years, echo=TRUE}
+shootings_per_year <- shooting_location %>% 
+  group_by(month = month(OCCUR_DATE),year = year(OCCUR_DATE)) %>%
+  summarize(incidents=sum(incidents)) %>%
+  select(month, year, incidents)
+shootings_per_year %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_line(aes())+
+  facet_wrap(~ year, ncol = 3)+
+  scale_x_continuous(breaks=seq(1,12,2))+
+  scale_y_continuous(breaks=seq(50,250,100))+
+  labs(title= "Total Monthly Shootings Each Year",
+       x = "Month",
+       y = "Number of Shootings")
+```
+
+Now we can see that summer months tend to have higher shooting incidents. I'll combine the years and create a scatter plot.
+
+```{r sscatter_plot, echo=TRUE}
+shootings_per_year %>%
+  ungroup() %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_point(aes())+
+  scale_x_continuous(breaks=seq(1,12))+
+  labs(title= "NYC Shootings by Month (2006-2023)",
+       x = "Month",
+       y = "Number of Shootings")
+```
+
+## Model
+
+The trend for incidents by month seems to have two minimums and one maximum, so I'm going to model it with a 4th degree polynomial. 
+
+
+```{r model}
+mod = lm(shootings_per_year$incidents ~ poly(shootings_per_year$month, degree=4,raw=T))
+summary(mod)
+shootings_model <- shootings_per_year %>%
+  ungroup() %>%
+  mutate(pred = predict(mod)) %>%
+  ggplot()+
+  geom_point(aes(x=month, y=incidents))+
+  geom_line(aes(x=month, y=pred),color="red")+
+  scale_x_continuous(breaks=seq(1,12))+
+  labs(title= "Model for Monthly Shootings in NYC",
+       x = "Month",
+       y = "Number of Shootings")
+shootings_model
+```
+
+## Value Ranges
+
+The model seems to fit the shape of the data well, but I'm interested in predicting a range of values for future shooting incidents by month. To do this, I'm going to create a series of box plots for each month so I can compare the interquartile ranges. 
+
+
+```{r boxplot, echo=TRUE}
+boxplot(incidents~month, data=shootings_per_year,xlab = "Month",ylab="Number of Shootings",main="Shootings Per Month in NYC (2006-2023)")
+```
+
+Great! We can clearly see that the summer months have higher numbers of shootings. For instance, the interquartile range of July and August don't overlap with the interquartile range of January, February, March, or November. We can look at a table of the min, max, and mean per month to compare them numerically.
+
+```{r min_max_mean, echo=TRUE}
+shootings_min_max_mean <- shootings_per_year %>%
+  select(-c(year)) %>%
+  group_by(month) %>%
+  summarize(minimum = min(incidents), average = mean(incidents), maximum = max(incidents))
+shootings_min_max_mean
+```
+
+## Conclusion
+
+I focused on two predictors for relative shooting rates: location (borough), and time of the year.
+
+### Location
+
+Although I wasn't able to quickly find a dataset with population sizes for every year in order to calcute per capita shooting incidents from 2006-2023, I believe the year 2010 was a good representation of relative shooting rates amongst the boroughs. I can see in the visualization of shootings per month that the relative shooting rates remain fairly consistent over the course of the study period. Population sizes are also unlikely to change drastically from year to year, although COVID could have caused a population redistribution which I didn't explore. I also didn't look into any policy changes that could impact shooting rates. Because I didn't dig too deep into population counts, I can't make any confident conclusions about shooting rates per capita. However, knowing that in 2010 the borough with the highest shooting rate per capita was the Bronx and the borough with the lowest was Staten Island is a good indicator for relative safety. 
+
+
+### Time of Year
+
+Although each year had a different amplitude for the impact of time of year on shooting rates, I did see a clear increase in shooting rates in the summer months. This trend is correlation and not causation. Exploring the different factors that relate to time of the year would be interesting.
+
+### Bias and Limitations
+
+We do need to be careful with conflating shooting incident rates and safety. I didn't look at which demographics were primarily impacted by the shootings, so one place may be safer for a member of a certain demographic while it's more dangerous for a member of a different demographic. I also didn't account for the reason behind the shootings such as personal conflict which wouldn't impact a third party or random violence perpetrated by a stranger. In addition, the scale of the shootings is not inluded in the data, so I can't distinguish between a mass shooting and the shooting of a single person. 
+
+Additionally, we do need to take into account that the data is collected from a single source, the NYPD. Higher police presence in certain areas or based on amount of funding at the time could impact the number of reports. By making any conclusions with this data, I am indicating that I trust the police force to be honest about their reports. 
+
+I also have a personal bias where I see shootings as a bad thing that should be avoided. Noticing the trends does not inherently convey an opinion, and people are welcome to come to their own conclusion about what is "good" or "bad".
+

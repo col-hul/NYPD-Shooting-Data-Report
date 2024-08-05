@@ -1,0 +1,295 @@
+---
+title: "NYPD Shooting Incidents"
+output: beamer_presentation
+theme: "Madrid"
+colortheme: "seahorse"
+date: "2024-07-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r add_libraries, echo=FALSE,include=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r read_csv, echo=FALSE, include=FALSE}
+shooting_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+#shooting_data
+```
+
+```{r remove_dups, echo=FALSE, include=FALSE}
+shooting_data <- shooting_data %>% distinct(shooting_data$INCIDENT_KEY, shooting_data$OCCUR_TIME, .keep_all = TRUE)
+#shooting_data
+```
+
+```{r clean, echo=FALSE, include=FALSE}
+shooting_location <- shooting_data %>%
+  select(c(OCCUR_DATE, BORO)) %>%
+  mutate(OCCUR_DATE = as.Date(OCCUR_DATE, format = "%m/%d/%Y"), incidents = 1) %>%
+  rename(Borough = "BORO") %>%
+  drop_na()
+#shooting_location
+```
+
+```{r summarize, echo=FALSE, include=FALSE}
+#summary(shooting_location)
+```
+
+```{r group, echo=FALSE, include=FALSE}
+shootings_per_month <- shooting_location %>% 
+  group_by(month = floor_date(OCCUR_DATE, 'month'),Borough) %>%
+  summarize(incidents=sum(incidents)) %>%
+  select(month, Borough, incidents) %>%
+  ungroup()
+shootings_per_month
+```
+
+```{r by_borough, echo=FALSE, include=FALSE}
+shootings_by_borough <- shooting_location %>%
+  group_by(Borough) %>%
+  summarize(incidents = sum(incidents)) %>%
+  select(Borough, incidents) %>%
+  ungroup()
+```
+
+```{r pop_csv, echo=FALSE, include=FALSE}
+nyc_pop <- read_csv("https://data.cityofnewyork.us/api/views/xywu-7bv9/rows.csv?accessType=DOWNLOAD")
+pop_2010 <- nyc_pop %>%
+  select(c(Borough, '2010')) %>%
+  filter(Borough != "NYC Total") %>%
+  mutate(across(where(is.character), toupper)) %>%
+  rename(population = '2010')
+pop_2010
+```
+
+```{r shootings_2010, echo=FALSE, include=FALSE}
+shootings_2010 <- shooting_location %>%
+  group_by(year = year(OCCUR_DATE),Borough) %>%
+  summarize(incidents=sum(incidents)) %>%
+  filter(year==2010) %>%
+  select(year, Borough, incidents)
+shootings_2010
+```
+
+```{r per_capita, echo=FALSE, include=FALSE}
+per_capita_2010 <- shootings_2010 %>%
+  full_join(pop_2010) %>%
+  mutate(shootings_per_capita = incidents/population)
+per_capita_2010
+```
+
+```{r together, echo=FALSE, include=FALSE}
+total_shootings_per_month <- shooting_location %>% 
+  group_by(month = floor_date(OCCUR_DATE, 'month')) %>%
+  summarize(incidents=sum(incidents)) %>%
+  select(month, incidents)
+total_shootings_per_month
+summary(total_shootings_per_month$incidents)
+```
+
+```{r split_years, echo=FALSE, include=FALSE}
+shootings_per_year <- shooting_location %>% 
+  group_by(month = month(OCCUR_DATE),year = year(OCCUR_DATE)) %>%
+  summarize(incidents=sum(incidents)) %>%
+  select(month, year, incidents)
+```
+## Questions of Interest {data-background="newyork1.jpg}
+
+\centering
+\begin{block}{}
+   \textbf{When} and \textbf{where} do the most shooting incidents in New York occur?
+\end{block}
+
+\begin{block}{}
+What about the least?
+\end{block}
+
+## Cleaned and Grouped the Data
+
+```{r show_data, echo=FALSE}
+shootings_per_month
+```
+
+## Monthly Shooting Incidents in New York Boroughs
+
+```{r incidents_over_time, echo=FALSE}
+shootings_per_month %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_line(aes(color=Borough))+
+  theme(legend.position = "bottom", 
+        legend.key.size = unit(2,"line"),
+        legend.text=element_text(size=13),
+        legend.title=element_text(size=20),
+        axis.title=element_text(size=20))+
+  labs(x = "Date (By Month)",
+       y = "Number of Shootings")
+```
+
+## Where do most shootings occur?
+
+```{r pie_total, echo=FALSE}
+shootings_by_borough %>%
+  ggplot(aes(x="", y=incidents, fill= Borough)) +
+  geom_col() +
+  coord_polar(theta="y")+
+  theme(legend.key.size = unit(1,"cm"),
+        legend.text=element_text(size=13),
+        legend.title=element_text(size=20),
+        plot.title=element_text(size=25))+
+  labs(title="Total Number of Shooting Incidents",
+       x = "",
+       y = "")
+```
+
+## Is 2010 Representative?
+
+```{r pie_counts, echo=FALSE}
+per_capita_2010 %>%
+  ggplot(aes(x="", y=incidents, fill= Borough)) +
+  geom_col() +
+  coord_polar(theta="y")+
+  theme(legend.key.size = unit(1,"cm"),
+        legend.text=element_text(size=13),
+        legend.title=element_text(size=20),
+        plot.title=element_text(size=25))+
+  labs(title="Total Number of Shooting Incidents in 2010",
+       x = "",
+       y = "")
+```
+
+## What if we account for population size?
+
+```{r pie, echo=FALSE}
+per_capita_2010 %>%
+  ggplot(aes(x="", y=shootings_per_capita, fill= Borough)) +
+  geom_col() +
+  coord_polar(theta="y")+
+  theme(legend.key.size = unit(1,"cm"),
+        legend.text=element_text(size=13),
+        legend.title=element_text(size=20),
+        plot.title=element_text(size=25))+
+  labs(title="Total Number of Shooting Incidents Per Capita in 2010",
+       x = "",
+       y = "")
+```
+
+## Monthly Spikes
+
+```{r together_graph, echo=FALSE}
+total_shootings_per_month %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_line(aes())+
+  theme(plot.margin = margin(.1,.2,1,.2,"cm"),
+        axis.title=element_text(size=20),
+        plot.title=element_text(size=25))+
+  labs(title= "Total Monthly Shooting Incidents in NYC",
+       x = "Date (By Month)",
+       y = "Number of Shootings")
+```
+
+## Total Monthly Shootings Each Year
+
+```{r split_years_graph, echo=FALSE}
+shootings_per_year %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_line(aes())+
+  facet_wrap(~ year, ncol = 3)+
+  scale_x_continuous(breaks=seq(1,12,2))+
+  scale_y_continuous(breaks=seq(50,250,100))+
+  theme(plot.margin = margin(.1,.2,1,.2,"cm"),
+        axis.title=element_text(size=20))+
+  labs(x = "Month",
+       y = "Number of Shootings")
+```
+
+## NYC Shootings by Month (2006-2023)
+
+```{r sscatter_plot, echo=FALSE}
+shootings_per_year %>%
+  ungroup() %>%
+  ggplot(aes(x=month, y=incidents))+
+  geom_point(aes())+
+  scale_x_continuous(breaks=seq(1,12))+
+  theme(plot.margin = margin(.1,.2,1,.2,"cm"),
+        axis.title=element_text(size=20))+
+  labs(x = "Month",
+       y = "Number of Shootings")
+```
+
+## Model
+
+```{r model, echo=FALSE, include=FALSE}
+mod = lm(shootings_per_year$incidents ~ poly(shootings_per_year$month, degree=4,raw=T))
+summary(mod)
+shootings_model <- shootings_per_year %>%
+  ungroup() %>%
+  mutate(pred = predict(mod))
+```
+
+```{r model_graph, echo=FALSE}
+shootings_model %>%
+  ggplot()+
+  geom_point(aes(x=month, y=incidents))+
+  geom_line(aes(x=month, y=pred),color="red")+
+  scale_x_continuous(breaks=seq(1,12))+
+  theme(plot.margin = margin(.1,.2,1,.2,"cm"),
+        axis.title=element_text(size=20))+
+  labs(x = "Month",
+       y = "Number of Shootings")
+#shootings_model
+```
+
+## Shootings Per Month in NYC (2006-2023)
+
+```{r boxplot, echo=FALSE}
+boxplot(incidents~month, data=shootings_per_year,xlab = "Month",ylab="Number of Shootings", cex.lab = 1.45)
+```
+
+## Monthly Incident Ranges
+
+```{r min_max_mean, echo=FALSE}
+shootings_min_max_mean <- shootings_per_year %>%
+  select(-c(year)) %>%
+  group_by(month) %>%
+  summarize(minimum = min(incidents), average = mean(incidents), maximum = max(incidents))
+shootings_min_max_mean
+```
+
+## Conclusion
+
+\begin{alertblock}{Highest per capita shooting incidents}
+  \textbf{Bronx}
+\end{alertblock}
+
+\begin{exampleblock}{Lowest per capita shooting incidents}
+  \textbf{Staten Island}
+\end{exampleblock}
+
+\pause
+
+\begin{alertblock}{Month with the most shooting incidents}
+  \textbf{July}
+\end{alertblock}
+
+\begin{exampleblock}{Month with the fewest shooting incidents}
+  \textbf{February}
+\end{exampleblock}
+
+\pause
+
+\begin{block}{}
+  What does that mean for personal safety?
+\end{block}
+
+\begin{block}{}
+  What does that mean for city planning?
+\end{block}
+
+## Source Data
+
+NYPD shooting data
+
+https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD
