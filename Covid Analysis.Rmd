@@ -1,0 +1,262 @@
+---
+title: "COVID-19 Analysis"
+output: pdf_document
+date: "2024-07-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Since the COVID-19 epidemic started, vaccines have been a point of controversy as to their safety and efficacy. Thankfully we have a lot of data about vaccination rates and COVID mortality rates. I aim to use global data to explore the correlation between percentage of population vaccinated and COVID mortality rate. 
+
+## Load Libraries
+
+I load the tidyverse and lubridate libraries.
+
+```{r add_libraries, echo=TRUE}
+library(tidyverse)
+library(lubridate)
+```
+
+## Read in CSV
+
+I read in the csvs for global deaths and global cases and save them into appropriate variable names. I also include a dataset for global vaccines. 
+
+```{r read_csv, echo=TRUE}
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_global.csv")
+urls <- c(str_c(url_in, file_names))
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+
+
+global_vaccines_pop <- read_csv("https://raw.githubusercontent.com/govex/COVID-19/master/data_tables/vaccine_data/global_data/time_series_covid19_vaccine_doses_admin_global.csv")
+
+global_vaccines <- read_csv("https://raw.githubusercontent.com/govex/COVID-19/master/data_tables/vaccine_data/global_data/time_series_covid19_vaccine_global.csv")
+
+#global_vaccines_pop
+
+#global_vaccines
+
+```
+
+## Clean Data
+
+I put date data in a single column, create a new column for appropriate values ("cases", "deaths", and "vaccines"), and remove unnecessary columns. From global_vaccines_pop I only keep the population counts. I also summarize each dataset to make sure everything looks reasonable.
+
+```{r remove_columns, echo=TRUE}
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region',
+                         Lat, Long),
+               names_to = "Date",
+               values_to = "Cases") %>%
+  select(-c(Lat,Long))
+#global_cases
+
+summary(global_cases)
+
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region',
+                         Lat, Long),
+               names_to = "Date",
+               values_to = "Deaths") %>%
+  select(-c(Lat,Long))
+
+#global_deaths
+summary(global_deaths)
+
+global_populations <- global_vaccines_pop %>%
+  pivot_longer(cols = -c(UID:Population),
+               names_to = "Date",
+               values_to = "Vaccines") %>%
+  select(Date, Province_State, Country_Region, Population) %>%
+  mutate(Date = ymd(Date))
+  # mutate(vaccines=ifelse(is.na(vaccines),0,vaccines))
+
+#global_populations
+summary(global_populations)
+
+global_vaccines <- global_vaccines %>%
+  select(Date, Province_State, Country_Region, People_at_least_one_dose)
+
+#global_vaccines
+summary(global_vaccines)
+```
+
+The only issue I see here is that Province_State for global_vaccines is a logical rather than a character, and it's all NA. Therefore I won't be able to do my analysis on a Province/State level, so I'm going to add all of the subdivided data within each country up and just have country counts. Because I need to do this for multiple datasets, I'm going to go ahead and join them. In a new dataset, I'm going to remove any lines that have incomplete or unreasonable data (such as deaths higher than cases and number of people vaccinated larger than the total population).
+
+
+```{r join_datasets, echo=TRUE}
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region',
+         Province_State = 'Province/State') %>%
+  mutate(Date = mdy(Date)) %>%
+  full_join(global_populations) %>%
+  full_join(global_vaccines) %>%
+  group_by(Country_Region, Date) %>%
+  summarize(Cases = sum(Cases), Deaths = sum(Deaths), Population = sum(Population), Vaccinated = sum(People_at_least_one_dose)) %>%
+  ungroup()
+  
+#global
+ 
+global_complete <- global %>%
+  drop_na(c(Country_Region, Date, Cases, Deaths, Vaccinated, Population)) %>%
+  filter(Cases >= Deaths, Population >= Vaccinated)
+#global_complete
+summary(global_complete)
+```
+
+## Analysis
+
+Now I want to analyze my data. I'm looking at how vaccination rate affects death rate, so I'm going to calculate the percent deaths per case and the percent of the population that is vaccinated. 
+
+```{r calc_percents, echo=TRUE}
+global_complete <- global_complete %>%
+  group_by(Country_Region, Date) %>%
+  mutate(percent_deaths = Deaths/Cases *100,
+         percent_vaccinated = Vaccinated/Population *100) %>%
+  ungroup() %>%
+  select(percent_deaths, percent_vaccinated, everything())
+global_complete
+```
+
+We can visualize the percent deaths and the percent vaccinated as a time series.
+
+```{r time_series, echo=TRUE}
+global_complete %>%
+  ggplot(aes(x=Date, y = Percent)) +
+  geom_point(aes(y=percent_deaths, color="percent_deaths")) +
+  geom_point(aes(y=percent_vaccinated, color="percent_vaccinated")) +
+  theme(legend.position="bottom") +
+  labs(title="Death and Vaccination Rates")
+```
+
+This graph is terribly messy and doesn't really tell us much. There are too many countries included for us to make any conclusions. I can choose a single country to see what its trend looks like. Let's look at a few. 
+
+```{r by_country, echo=TRUE}
+afghanistan <- global_complete %>%
+  filter(Country_Region == "Afghanistan")
+
+afghanistan %>%
+  ggplot(aes(x=Date, y = Percent)) +
+  geom_line(aes(y=percent_deaths, color="percent_deaths")) +
+  geom_point(aes(y=percent_deaths, color="percent_deaths")) +
+  geom_line(aes(y=percent_vaccinated, color="percent_vaccinated")) + 
+  geom_point(aes(y=percent_vaccinated, color="percent_vaccinated")) +
+  theme(legend.position="bottom") +
+  labs(title="Afghanistan Death and Vaccination Rates")
+
+italy <- global_complete %>%
+  filter(Country_Region == "Italy")
+
+italy %>%
+  ggplot(aes(x=Date, y = Percent)) +
+  geom_line(aes(y=percent_deaths, color="percent_deaths")) +
+  geom_point(aes(y=percent_deaths, color="percent_deaths")) +
+  geom_line(aes(y=percent_vaccinated, color="percent_vaccinated")) + 
+  geom_point(aes(y=percent_vaccinated, color="percent_vaccinated")) +
+  theme(legend.position="bottom") +
+  labs(title="Italy Death and Vaccination Rates")
+
+zimbabwe <- global_complete %>%
+  filter(Country_Region == "Zimbabwe")
+
+zimbabwe %>%
+  ggplot(aes(x=Date, y = Percent)) +
+  geom_line(aes(y=percent_deaths, color="percent_deaths")) +
+  geom_point(aes(y=percent_deaths, color="percent_deaths")) +
+  geom_line(aes(y=percent_vaccinated, color="percent_vaccinated")) + 
+  geom_point(aes(y=percent_vaccinated, color="percent_vaccinated")) +
+  theme(legend.position="bottom") +
+  labs(title="Zimbabwe Death and Vaccination Rates")
+```
+
+Using data from all of the countries, I want to see if vaccination rate is a good predictor for death rate. I start by creating a scatter plot. 
+
+```{r compare, echo=TRUE}
+global_complete %>%
+  ggplot(aes(x=percent_vaccinated, y = percent_deaths)) +
+  geom_point(aes()) +
+  labs(title="Global Death Rate by Vaccination Status",
+       x="Percent of Population Vaccinated",
+       y="Percent of Deaths per Case")
+```
+
+Again, we end up with a very messy graph due to large amounts of data. I'll redo the country graphs with these different axes, then I want to do an overall comparison (global in scope) using sampled points in time. 
+
+```{r compare_by_country, echo=TRUE}
+afghanistan %>%
+  ggplot(aes(x=percent_vaccinated, y = percent_deaths)) +
+  geom_point(aes()) +
+  labs(title="Afghanistan Death Rate by Vaccination Status",
+       x="Percent of Population Vaccinated",
+       y="Percent of Deaths per Case")
+
+italy %>%
+  ggplot(aes(x=percent_vaccinated, y = percent_deaths)) +
+  geom_point(aes()) +
+  labs(title="Italy Death Rate by Vaccination Status",
+       x="Percent of Population Vaccinated",
+       y="Percent of Deaths per Case")
+
+zimbabwe %>%
+  ggplot(aes(x=percent_vaccinated, y = percent_deaths)) +
+  geom_point(aes()) +
+  labs(title="Zimbabwe Death Rate by Vaccination Status",
+       x="Percent of Population Vaccinated",
+       y="Percent of Deaths per Case")
+```
+
+Those graphs all look pretty different in shape, but they do tend downwards indicating a likely negative correlation between vaccination rate and death rate. I really want to see a global sample to see if the pattern holds true. 
+
+Now I'll bring my data down to a manageable size by choosing points in time to sample. Arbitrarily, I will choose every six months from February 2, 2021 to February 2, 2023.
+
+```{r sampled_date, echo=TRUE}
+sample <- global_complete %>%
+  filter(Date == "2021-02-02" | Date == "2021-08-02" | Date == "2022-02-02" | Date == "2022-08-02" | Date == "2023-02-02")
+
+sample %>%
+  ggplot(aes(x=percent_vaccinated, y = percent_deaths)) +
+  geom_point(aes()) +
+  labs(title="Global Death Rate by Vaccination Status (Select Dates)",
+       x="Percent of Population Vaccinated",
+       y="Percent of Deaths per Case")
+```
+
+I do still see a negative trend although there are some outliers which may cause a high bias. Nevertheless, even the samples with unusually high death rates also appear to follow the negative trend. I don't think they will effect the overall conclusion.
+
+I'll see how well a linear plot models the data. 
+
+```{r model, echo=TRUE}
+mod = lm(percent_deaths ~ percent_vaccinated, data = sample)
+summary(mod)
+sample_model <- sample %>%
+  mutate(pred = predict(mod)) %>%
+  ggplot(aes(x=percent_vaccinated, y = percent_deaths)) +
+  geom_point(aes()) +
+  geom_line(aes(x=percent_vaccinated, y=pred), color="red") +
+  labs(title="Global Death Rate by Vaccination Status (Select Dates)",
+       x="Percent of Population Vaccinated",
+       y="Percent of Deaths per Case")
+sample_model
+```
+
+Our model for this sample does indicate a negative correlation between vaccination rate and death rate. Is this sample representative of the entire dataset? To find out, I want to calculate the Pearson's correlation coefficient for the entire dataset.
+
+```{r correlation, echo=TRUE}
+cor.test(global_complete$percent_vaccinated, global_complete$percent_deaths)
+```
+
+The 95% confidence interval is entirely negative (-0.3061 to -0.2945), so we can conclude that there is, in fact, a negative correlation between vaccination rate and death rate. 
+
+## Conclusion
+
+Our data suggests that there is indeed a negative correlation between percent of the population vaccinated and deaths per case. This suggests that vaccines are effective at reducing COVID severity, but we can't actually make any efficacy claims based on just this data. Many methods were implemented at the same time in an effort to manage the spread and severity of the virus, so it's possible that another method used in conjunction with vaccines is responsible for the decline in deaths per case. It's even possible that over time, vaccination rates increased while the virus mutated into a less deadly strain. In order to determine causation, we would need a study that isolates vaccination rate as a variable.
